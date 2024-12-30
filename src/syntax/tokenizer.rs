@@ -71,37 +71,6 @@ impl Tokenizer {
 
     fn next(mut self, character: char) -> Tokenizer {
         match (self.state, character, self.char_buffer.as_str()) {
-
-            /*
-                Operator parsing
-            */
-            // Handle multi-character Operators:
-            // If the buffer + current character is a multi-character operator
-            //    we simply add the token and move on.
-            // Otherwise we need to add the single character operator and reprocess
-            //    the current character with an empty buffer.
-            (TokenizerStates::Operator, ..) => {
-                let multi_char_operator =  Operator::from(format!("{}{}", self.char_buffer, character).as_str());
-                if multi_char_operator != Operator::Invalid {
-                    self.tokens.push(Token::Separator(Separator::Operator(multi_char_operator)));
-                    Tokenizer {
-                        state: TokenizerStates::Base,
-                        char_buffer: String::from(""),
-                        tokens: self.tokens,
-                    }
-                } else {
-                    let single_char_operator =  Operator::from(self.char_buffer.as_str());
-                    self.tokens.push(Token::Separator(Separator::Operator(single_char_operator)));
-                    let tokenizer = Tokenizer {
-                        state: TokenizerStates::Base,
-                        char_buffer: String::from(""),
-                        tokens: self.tokens,
-                    };
-                    tokenizer.next(character)
-                }
-
-            }
-
             /*
                 String parsing
             */
@@ -217,6 +186,37 @@ impl Tokenizer {
             }
 
             /*
+                Operator parsing
+            */
+            // Handle multi-character Operators:
+            // If the buffer + current character is a multi-character operator
+            //    we simply add the token and move on.
+            // Otherwise we need to add the single character operator and reprocess
+            //    the current character with an empty buffer.
+            (TokenizerStates::Operator, ..) => {
+                let multi_char_operator =  Operator::from(format!("{}{}", self.char_buffer, character).as_str());
+                if multi_char_operator != Operator::Invalid {
+                    self.tokens.push(Token::Separator(Separator::Operator(multi_char_operator)));
+                    Tokenizer {
+                        state: TokenizerStates::Base,
+                        char_buffer: String::from(""),
+                        tokens: self.tokens,
+                    }
+                } else {
+                    let single_char_operator =  Operator::from(self.char_buffer.as_str());
+                    self.tokens.push(Token::Separator(Separator::Operator(single_char_operator)));
+                    let tokenizer = Tokenizer {
+                        state: TokenizerStates::Base,
+                        char_buffer: String::from(""),
+                        tokens: self.tokens,
+                    };
+                    tokenizer.next(character)
+                }
+
+            }
+
+
+            /*
                 Base
             */
             _ => {
@@ -257,7 +257,6 @@ impl Tokenizer {
                                     char_buffer: String::from(""),
                                     tokens: self.tokens
                                 }
-
                             }
                         }
                     }
@@ -267,28 +266,60 @@ impl Tokenizer {
     }
 }
 
+
+fn tokenize(sql: &str) -> Vec<Token> {
+    let mut char_iter = CharStream::new(sql);
+    let mut token_state_machine = Tokenizer::new();
+
+    loop {
+        let Some(character) = char_iter.next_char() else {
+            return token_state_machine.tokens;
+        };
+
+        token_state_machine = token_state_machine.next(character);
+    }
+}
+
 #[cfg(test)]
 mod test {
 
-    use super::{Keyword, Token, Whitespace, Tokenizer};
+    use super::{Keyword, Token, Whitespace, Separator, tokenize};
 
-    // #[test]
-    // fn tokenize_select() {
-    //     let sql = "SELECT * FROM table;";
+    #[test]
+    fn tokenize_select() {
+        let sql = "SELECT a_column FROM a_table;";
 
-    //     assert_eq!(
-    //         tokenize(sql, Token),
-    //         Ok(vec![
-    //             Token::Keyword(Keyword::Select),
-    //             Token::Whitespace(Whitespace::Space),
-    //             Token::Identifier("*".into()),
-    //             Token::Whitespace(Whitespace::Space),
-    //             Token::Keyword(Keyword::From),
-    //             Token::Whitespace(Whitespace::Space),
-    //             Token::Identifier("table".into()),
-    //             Token::Whitespace(Whitespace::Space),
-    //             Token::Semicolon,
-    //         ])
-    //     )
-    // }
+        assert_eq!(
+            tokenize(sql),
+            vec![
+                Token::Keyword(Keyword::Select),
+                Token::Separator(Separator::Whitespace(Whitespace::Space)),
+                Token::Identifier("a_column".into()),
+                Token::Separator(Separator::Whitespace(Whitespace::Space)),
+                Token::Keyword(Keyword::From),
+                Token::Separator(Separator::Whitespace(Whitespace::Space)),
+                Token::Identifier("a_table".into()),
+                Token::Separator(Separator::Semicolon),
+            ]
+        )
+    }
+
+    #[test]
+    fn tokenize_select_all() {
+        let sql = "SELECT * FROM a_table;";
+
+        assert_eq!(
+            tokenize(sql),
+            vec![
+                Token::Keyword(Keyword::Select),
+                Token::Separator(Separator::Whitespace(Whitespace::Space)),
+                Token::Identifier("a_column".into()),
+                Token::Separator(Separator::Whitespace(Whitespace::Space)),
+                Token::Keyword(Keyword::From),
+                Token::Separator(Separator::Whitespace(Whitespace::Space)),
+                Token::Identifier("a_table".into()),
+                Token::Separator(Separator::Semicolon),
+            ]
+        )
+    }
 }
