@@ -5,6 +5,7 @@ pub(crate) enum Token {
     Separator(Separator),
     String(String),
     Number(String),
+    Invalid(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -107,7 +108,7 @@ impl From<&str> for Separator {
             "," => Separator::Comma,
             _ => {
                 if Whitespace::from(val) != Whitespace::Invalid {
-                   Separator::Whitespace(Whitespace::from(val))
+                    Separator::Whitespace(Whitespace::from(val))
                 } else if Operator::from(val) != Operator::Invalid {
                     Separator::Operator(Operator::from(val))
                 } else {
@@ -124,11 +125,10 @@ impl From<&str> for Whitespace {
             " " => Whitespace::Space,
             "\t" => Whitespace::Tab,
             "\n" => Whitespace::Newline,
-            _ => Whitespace::Invalid
+            _ => Whitespace::Invalid,
         }
     }
 }
-
 
 impl From<&str> for Keyword {
     fn from(val: &str) -> Keyword {
@@ -172,7 +172,7 @@ impl From<&str> for Keyword {
             "VALUES" => Keyword::Values,
             "VARCHAR" => Keyword::Varchar,
             "WHERE" => Keyword::Where,
-            _ => Keyword::Invalid
+            _ => Keyword::Invalid,
         }
     }
 }
@@ -193,7 +193,7 @@ impl From<&str> for Operator {
             ")" => Operator::ParenClose,
             "(" => Operator::ParenOpen,
             "-" => Operator::Subtract,
-            _ => Operator::Invalid
+            _ => Operator::Invalid,
         }
     }
 }
