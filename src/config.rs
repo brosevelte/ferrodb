@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use thiserror::Error;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -46,9 +47,12 @@ impl Default for Config {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum ConfigError {
+    #[error("File not found: {0}")]
     FileNotFound(String),
+
+    #[error("Invalid YAML: {0}")]
     InvalidYaml(String),
 }
 

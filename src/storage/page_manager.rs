@@ -2,7 +2,7 @@ use super::page::Page;
 use crate::storage::page_io::{PageError, PageIO};
 use lru::LruCache;
 use std::num::NonZeroUsize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct PageManager {
     page_io: PageIO,
@@ -10,8 +10,42 @@ pub struct PageManager {
     page_size: usize,
 }
 
+pub struct PageManagerBuilder {
+    db_path: PathBuf,
+    page_size: u64,
+    cache_size: usize,
+}
+
+impl PageManagerBuilder {
+    pub fn new(db_path: impl AsRef<Path>) -> Self {
+        Self {
+            db_path: db_path.as_ref().to_path_buf(),
+            page_size: 4096,  // Default page size
+            cache_size: 1000, // Default cache size
+        }
+    }
+
+    pub fn page_size(mut self, size: u64) -> Self {
+        self.page_size = size;
+        self
+    }
+
+    pub fn cache_size(mut self, size: usize) -> Self {
+        self.cache_size = size;
+        self
+    }
+
+    pub fn build(self) -> Result<PageManager, PageError> {
+        if self.page_size == 0 {
+            return Err(PageError::InvalidPageSize);
+        }
+
+        PageManager::new(self.db_path, self.page_size, self.cache_size)
+    }
+}
+
 impl PageManager {
-    pub fn new(
+    fn new(
         db_path: impl AsRef<Path>,
         page_size: u64,
         cache_size: usize,
@@ -56,10 +90,38 @@ mod tests {
 
     fn setup_test_manager() -> (NamedTempFile, PageManager) {
         let temp_file = NamedTempFile::new().unwrap();
-        let page_size = 128; // Smaller page size for testing
-        let cache_size = 10; // Small cache for testing
-        let manager = PageManager::new(temp_file.path(), page_size, cache_size).unwrap();
+        let manager = PageManagerBuilder::new(temp_file.path())
+            .page_size(128) // Smaller page size for testing
+            .cache_size(10) // Small cache for testing
+            .build()
+            .unwrap();
         (temp_file, manager)
+    }
+
+    #[test]
+    fn test_builder_configuration() {
+        let temp_file = NamedTempFile::new().unwrap();
+
+        // Test default configuration
+        let default_manager = PageManagerBuilder::new(temp_file.path()).build().unwrap();
+        assert_eq!(default_manager.page_size, 4096);
+
+        // Test custom configuration
+        let custom_manager = PageManagerBuilder::new(temp_file.path())
+            .page_size(8192)
+            .cache_size(500)
+            .build()
+            .unwrap();
+        assert_eq!(custom_manager.page_size, 8192);
+    }
+
+    #[test]
+    fn test_invalid_page_size() {
+        let temp_file = NamedTempFile::new().unwrap();
+        let result = PageManagerBuilder::new(temp_file.path())
+            .page_size(0)
+            .build();
+        assert!(matches!(result, Err(PageError::InvalidPageSize)));
     }
 
     #[test]
@@ -75,13 +137,15 @@ mod tests {
     #[test]
     fn test_cache_eviction() {
         let temp_file = NamedTempFile::new().unwrap();
-        let page_size = 128;
-        let cache_size = 1; // Very small cache for testing eviction
-        let mut manager = PageManager::new(temp_file.path(), page_size, cache_size).unwrap();
+        let mut manager = PageManagerBuilder::new(temp_file.path())
+            .page_size(128)
+            .cache_size(1) // Very small cache for testing eviction
+            .build()
+            .unwrap();
 
         // Write two pages with cache size 1
-        let data1 = vec![1u8; page_size as usize];
-        let data2 = vec![2u8; page_size as usize];
+        let data1 = vec![1u8; manager.page_size];
+        let data2 = vec![2u8; manager.page_size];
 
         manager.write_page(0, Page::new(data1.clone())).unwrap();
         manager.write_page(1, Page::new(data2.clone())).unwrap();

@@ -1,21 +1,19 @@
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{self, Cursor};
+use thiserror::Error;
 
 #[derive(Debug, PartialEq)]
 pub struct Page {
     data: Vec<u8>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum PageDecodeError {
-    IoError(io::Error),
-    InvalidFormat,
-}
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
 
-impl From<io::Error> for PageDecodeError {
-    fn from(error: io::Error) -> Self {
-        PageDecodeError::IoError(error)
-    }
+    #[error("Invalid format: attempted to read beyond page bounds")]
+    InvalidFormat,
 }
 
 impl Page {

@@ -2,30 +2,26 @@ use super::page::{Page, PageDecodeError};
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use thiserror::Error;
 
 pub struct PageIO {
     file: File,
     page_size: u64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum PageError {
-    IoError(io::Error),
-    DecodeError(PageDecodeError),
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
+
+    #[error("Decode error: {0}")]
+    DecodeError(#[from] PageDecodeError),
+
+    #[error("Invalid page size")]
     InvalidPageSize,
-    PageNotFound,
-}
 
-impl From<io::Error> for PageError {
-    fn from(error: io::Error) -> Self {
-        PageError::IoError(error)
-    }
-}
-
-impl From<PageDecodeError> for PageError {
-    fn from(error: PageDecodeError) -> Self {
-        PageError::DecodeError(error)
-    }
+    #[error("Page {0} not found")]
+    PageNotFound(u64),
 }
 
 impl PageIO {
@@ -49,7 +45,9 @@ impl PageIO {
         self.file.seek(SeekFrom::Start(self.page_offset(page_id)))?;
         match self.file.read_exact(&mut buffer) {
             Ok(_) => Ok(Page::new(buffer)),
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => Err(PageError::PageNotFound),
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                Err(PageError::PageNotFound(page_id))
+            }
             Err(e) => Err(PageError::IoError(e)),
         }
     }
@@ -102,14 +100,14 @@ mod tests {
     fn test_read_nonexistent_page() {
         let (_temp, mut page_io) = setup_test_page_io();
         let result = page_io.read_page(999);
-        assert!(matches!(result, Err(PageError::PageNotFound)));
+        assert!(matches!(result, Err(PageError::PageNotFound(999))));
     }
 
     #[test]
     fn test_invalid_buffer_size() {
         let (_temp, mut page_io) = setup_test_page_io();
         let result = page_io.read_page(0);
-        assert!(matches!(result, Err(PageError::PageNotFound)));
+        assert!(matches!(result, Err(PageError::PageNotFound(0))));
     }
 
     #[test]
