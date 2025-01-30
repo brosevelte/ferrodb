@@ -21,6 +21,14 @@ impl Page {
         Self { data }
     }
 
+    pub fn zeros(page_size: usize) -> Self {
+        Self::new(vec![0; page_size])
+    }
+
+    pub fn full(value: u8, page_size: usize) -> Self {
+        Self::new(vec![value; page_size])
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
         &self.data
     }
@@ -61,5 +69,11 @@ mod tests {
             page.read_u32(2),
             Err(PageDecodeError::InvalidFormat)
         ));
+    }
+
+    #[test]
+    fn test_from_size() {
+        let page: Page = Page::zeros(8192);
+        assert_eq!(page.as_bytes(), &vec![0; 8192]);
     }
 }

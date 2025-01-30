@@ -1,13 +1,8 @@
 use super::page::{Page, PageDecodeError};
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use thiserror::Error;
-
-pub struct PageIO {
-    file: File,
-    page_size: u64,
-}
 
 #[derive(Debug, Error)]
 pub enum PageError {
@@ -22,111 +17,102 @@ pub enum PageError {
 
     #[error("Page {0} not found")]
     PageNotFound(u64),
+
+    #[error("File already exists: {0}")]
+    FileAlreadyExists(String),
+
+    #[error("Permission denied: {0}")]
+    PermissionDenied(String),
+}
+
+pub struct PageIO {
+    reader: BufReader<File>,
+    writer: BufWriter<File>,
 }
 
 impl PageIO {
-    pub fn new(db_path: impl AsRef<Path>, page_size: u64) -> Result<Self, PageError> {
-        // Create parent directories if they don't exist
-        if let Some(parent) = db_path.as_ref().parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
+    pub fn new(db_path: impl AsRef<Path>) -> Result<Self, PageError> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .open(db_path)?;
 
-        Ok(Self { file, page_size })
+        let reader = BufReader::new(file.try_clone()?);
+        let writer = BufWriter::new(file.try_clone()?);
+
+        Ok(Self { reader, writer })
     }
 
-    pub fn read_page(&mut self, page_id: u64) -> Result<Page, PageError> {
-        let mut buffer = vec![0; self.page_size as usize];
-        self.file.seek(SeekFrom::Start(self.page_offset(page_id)))?;
-        match self.file.read_exact(&mut buffer) {
+    pub fn read_page(&mut self, page_id: u64, page_size: usize) -> Result<Page, PageError> {
+        let mut buffer = vec![0; page_size];
+        let offset = page_id as u64 * page_size as u64;
+
+        // Seek to position
+        self.reader.seek(SeekFrom::Start(offset))?;
+
+        // Try to read the exact amount
+        match self.reader.read_exact(&mut buffer) {
             Ok(_) => Ok(Page::new(buffer)),
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 Err(PageError::PageNotFound(page_id))
             }
             Err(e) => Err(PageError::IoError(e)),
         }
     }
 
-    pub fn write_page(&mut self, page_id: u64, page: &Page) -> Result<(), PageError> {
-        let data = page.as_bytes();
-        if data.len() != self.page_size as usize {
-            return Err(PageError::InvalidPageSize);
-        }
-        self.file.seek(SeekFrom::Start(self.page_offset(page_id)))?;
-        self.file.write_all(data)?;
-        self.file.flush()?;
+    pub fn write_page(
+        &mut self,
+        page_id: u64,
+        page_size: usize,
+        page: &Page,
+    ) -> Result<(), PageError> {
+        let offset = page_id as u64 * page_size as u64;
+        self.writer.seek(SeekFrom::Start(offset))?;
+        self.writer.write_all(page.as_bytes())?;
         Ok(())
     }
 
-    fn page_offset(&self, page_id: u64) -> u64 {
-        page_id * self.page_size
-    }
-
-    pub fn blank_page(&self) -> Vec<u8> {
-        vec![0; self.page_size as usize]
+    pub fn flush(&mut self) -> Result<(), PageError> {
+        self.writer.flush()?; // Add this line to flush the buffer
+        Ok(())
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
-    fn setup_test_page_io() -> (NamedTempFile, PageIO) {
+    fn setup_test_page_io() -> (NamedTempFile, usize, PageIO) {
         let temp_file = NamedTempFile::new().unwrap();
-        let page_size = 128; // Smaller page size for testing
-        let page_io = PageIO::new(temp_file.path(), page_size).unwrap();
-        (temp_file, page_io)
+        let page_size: usize = 128; // Smaller page size for testing
+        let page_io = PageIO::new(temp_file.path()).unwrap();
+        (temp_file, page_size, page_io)
     }
 
     #[test]
     fn test_write_and_read_page() {
-        let (_temp, mut page_io) = setup_test_page_io();
-        let write_data = vec![42u8; page_io.page_size as usize];
+        let (_temp, page_size, mut page_io) = setup_test_page_io();
+        let write_data = vec![42u8; page_size as usize];
         page_io
-            .write_page(0, &Page::new(write_data.clone()))
+            .write_page(0, page_size, &Page::new(write_data.clone()))
             .unwrap();
-
-        let read_page = page_io.read_page(0).unwrap();
+        page_io.flush().unwrap();
+        let read_page = page_io.read_page(0, page_size).unwrap();
         assert_eq!(write_data, read_page.as_bytes());
     }
 
     #[test]
     fn test_read_nonexistent_page() {
-        let (_temp, mut page_io) = setup_test_page_io();
-        let result = page_io.read_page(999);
+        let (_temp, page_size, mut page_io) = setup_test_page_io();
+        let result = page_io.read_page(999, page_size);
         assert!(matches!(result, Err(PageError::PageNotFound(999))));
     }
 
     #[test]
     fn test_invalid_buffer_size() {
-        let (_temp, mut page_io) = setup_test_page_io();
-        let result = page_io.read_page(0);
+        let (_temp, page_size, mut page_io) = setup_test_page_io();
+        let result = page_io.read_page(0, page_size);
         assert!(matches!(result, Err(PageError::PageNotFound(0))));
-    }
-
-    #[test]
-    fn test_blank_page() {
-        let (_temp, page_io) = setup_test_page_io();
-        let blank = page_io.blank_page();
-        assert_eq!(blank.len(), page_io.page_size as usize);
-        assert!(blank.iter().all(|&byte| byte == 0));
-    }
-
-    #[test]
-    fn test_read_with_blank_page() {
-        let (_temp, mut page_io) = setup_test_page_io();
-        let write_data = vec![42u8; page_io.page_size as usize];
-        page_io
-            .write_page(0, &Page::new(write_data.clone()))
-            .unwrap();
-
-        let read_page = page_io.read_page(0).unwrap();
-        assert_eq!(write_data, read_page.as_bytes());
     }
 }
