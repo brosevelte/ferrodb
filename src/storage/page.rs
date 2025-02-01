@@ -9,11 +9,14 @@ pub struct Page {
 
 #[derive(Debug, Error)]
 pub enum PageDecodeError {
-    #[error("IO error: {0}")]
-    IoError(#[from] io::Error),
-
     #[error("Invalid format: attempted to read beyond page bounds")]
-    InvalidFormat,
+    UnexpectedEof,
+
+    #[error("Invalid page size: {0}")]
+    InvalidPageSize(String),
+
+    #[error("Unable to parse bytes into expected type")]
+    InvalidBytes(#[from] io::Error),
 }
 
 impl Page {
@@ -35,7 +38,7 @@ impl Page {
 
     pub fn read_u32(&self, offset: usize) -> Result<u32, PageDecodeError> {
         if offset + 4 > self.data.len() {
-            return Err(PageDecodeError::InvalidFormat);
+            return Err(PageDecodeError::UnexpectedEof);
         }
         let mut cursor = Cursor::new(&self.data[offset..]);
         Ok(cursor.read_u32::<BigEndian>()?)
@@ -43,7 +46,7 @@ impl Page {
 
     pub fn write_u32(&mut self, offset: usize, value: u32) -> Result<(), PageDecodeError> {
         if offset + 4 > self.data.len() {
-            return Err(PageDecodeError::InvalidFormat);
+            return Err(PageDecodeError::UnexpectedEof);
         }
         let mut cursor = Cursor::new(&mut self.data[offset..]);
         cursor.write_u32::<BigEndian>(value)?;
@@ -67,7 +70,7 @@ mod tests {
         let page = Page::new(vec![0; 4]);
         assert!(matches!(
             page.read_u32(2),
-            Err(PageDecodeError::InvalidFormat)
+            Err(PageDecodeError::UnexpectedEof)
         ));
     }
 

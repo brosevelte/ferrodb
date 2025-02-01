@@ -5,21 +5,15 @@ use std::path::Path;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum PageError {
+pub enum PageIOError {
     #[error("IO error: {0}")]
     IoError(#[from] io::Error),
 
     #[error("Decode error: {0}")]
     DecodeError(#[from] PageDecodeError),
 
-    #[error("Invalid page size")]
-    InvalidPageSize,
-
     #[error("Page {0} not found")]
     PageNotFound(u64),
-
-    #[error("File already exists: {0}")]
-    FileAlreadyExists(String),
 
     #[error("Permission denied: {0}")]
     PermissionDenied(String),
@@ -31,20 +25,17 @@ pub struct PageIO {
 }
 
 impl PageIO {
-    pub fn new(db_path: impl AsRef<Path>) -> Result<Self, PageError> {
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .open(db_path)?;
+    pub fn new(db_path: impl AsRef<Path>) -> Result<Self, PageIOError> {
+        let reader_file = File::open(&db_path)?;
+        let writer_file = OpenOptions::new().write(true).create(true).open(&db_path)?;
 
-        let reader = BufReader::new(file.try_clone()?);
-        let writer = BufWriter::new(file.try_clone()?);
+        let reader = BufReader::new(reader_file.try_clone()?);
+        let writer = BufWriter::new(writer_file.try_clone()?);
 
         Ok(Self { reader, writer })
     }
 
-    pub fn read_page(&mut self, page_id: u64, page_size: usize) -> Result<Page, PageError> {
+    pub fn read_page(&mut self, page_id: u64, page_size: usize) -> Result<Page, PageIOError> {
         let mut buffer = vec![0; page_size];
         let offset = page_id as u64 * page_size as u64;
 
@@ -55,9 +46,9 @@ impl PageIO {
         match self.reader.read_exact(&mut buffer) {
             Ok(_) => Ok(Page::new(buffer)),
             Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                Err(PageError::PageNotFound(page_id))
+                Err(PageIOError::PageNotFound(page_id))
             }
-            Err(e) => Err(PageError::IoError(e)),
+            Err(e) => Err(PageIOError::IoError(e)),
         }
     }
 
@@ -66,14 +57,14 @@ impl PageIO {
         page_id: u64,
         page_size: usize,
         page: &Page,
-    ) -> Result<(), PageError> {
+    ) -> Result<(), PageIOError> {
         let offset = page_id as u64 * page_size as u64;
         self.writer.seek(SeekFrom::Start(offset))?;
         self.writer.write_all(page.as_bytes())?;
         Ok(())
     }
 
-    pub fn flush(&mut self) -> Result<(), PageError> {
+    pub fn flush(&mut self) -> Result<(), PageIOError> {
         self.writer.flush()?; // Add this line to flush the buffer
         Ok(())
     }
@@ -106,13 +97,13 @@ mod tests {
     fn test_read_nonexistent_page() {
         let (_temp, page_size, mut page_io) = setup_test_page_io();
         let result = page_io.read_page(999, page_size);
-        assert!(matches!(result, Err(PageError::PageNotFound(999))));
+        assert!(matches!(result, Err(PageIOError::PageNotFound(999))));
     }
 
     #[test]
     fn test_invalid_buffer_size() {
         let (_temp, page_size, mut page_io) = setup_test_page_io();
         let result = page_io.read_page(0, page_size);
-        assert!(matches!(result, Err(PageError::PageNotFound(0))));
+        assert!(matches!(result, Err(PageIOError::PageNotFound(0))));
     }
 }

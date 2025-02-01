@@ -1,8 +1,21 @@
-use super::page::Page;
-use crate::storage::page_io::{PageError, PageIO};
+use super::page::{Page, PageDecodeError};
+use crate::storage::page_io::{PageIO, PageIOError};
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum PageManagerError {
+    #[error("Invalid cache size: {0}")]
+    InvalidCacheSize(String),
+
+    #[error("Page error: {0}")]
+    PageDecodeError(#[from] PageDecodeError),
+
+    #[error("Page IO error: {0}")]
+    PageIOError(#[from] PageIOError),
+}
 
 pub struct PageManager {
     page_io: PageIO,
@@ -15,7 +28,10 @@ impl PageManager {
         db_path: impl AsRef<Path>,
         page_size: usize,
         cache_size: usize,
-    ) -> Result<Self, PageError> {
+    ) -> Result<Self, PageManagerError> {
+        let cache = NonZeroUsize::new(cache_size).ok_or(PageManagerError::InvalidCacheSize(
+            "Cache size must be greater than 0.".into(),
+        ))?;
         Ok(Self {
             page_io: PageIO::new(db_path)?,
             cache: LruCache::new(NonZeroUsize::new(cache_size).unwrap()),
@@ -23,7 +39,7 @@ impl PageManager {
         })
     }
 
-    pub fn get_page(&mut self, page_id: u64) -> Result<&Page, PageError> {
+    pub fn get_page(&mut self, page_id: u64) -> Result<&Page, PageManagerError> {
         if !self.cache.contains(&page_id) {
             let page = self.page_io.read_page(page_id, self.page_size)?;
             self.cache.put(page_id, page);
@@ -31,7 +47,7 @@ impl PageManager {
         Ok(self.cache.get(&page_id).unwrap())
     }
 
-    pub fn write_page(&mut self, page_id: u64, page: Page) -> Result<(), PageError> {
+    pub fn write_page(&mut self, page_id: u64, page: Page) -> Result<(), PageManagerError> {
         self.page_io.write_page(page_id, self.page_size, &page)?;
         self.cache.put(page_id, page);
         Ok(())
@@ -41,7 +57,7 @@ impl PageManager {
         self.cache.pop(&page_id);
     }
 
-    pub fn flush(&mut self) -> Result<(), PageError> {
+    pub fn flush(&mut self) -> Result<(), PageManagerError> {
         for (&page_id, page) in self.cache.iter() {
             self.page_io.write_page(page_id, self.page_size, page)?;
         }
@@ -74,9 +90,11 @@ impl PageManagerBuilder {
         self
     }
 
-    pub fn build(self) -> Result<PageManager, PageError> {
+    pub fn build(self) -> Result<PageManager, PageManagerError> {
         if self.page_size == 0 {
-            return Err(PageError::InvalidPageSize);
+            return Err(PageManagerError::PageDecodeError(
+                PageDecodeError::InvalidPageSize("Page size cannot be 0".into()),
+            ));
         }
 
         PageManager::new(self.db_path, self.page_size, self.cache_size)
@@ -121,7 +139,12 @@ mod tests {
         let result = PageManagerBuilder::new(temp_file.path())
             .page_size(0)
             .build();
-        assert!(matches!(result, Err(PageError::InvalidPageSize)));
+        assert!(matches!(
+            result,
+            Err(PageManagerError::PageDecodeError(
+                PageDecodeError::InvalidBytes(_)
+            ))
+        ));
     }
 
     #[test]
